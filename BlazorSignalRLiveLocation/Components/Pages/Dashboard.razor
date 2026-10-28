@@ -1,0 +1,98 @@
+﻿@page "/dashboard"
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.SignalR.Client
+@inject NavigationManager Nav
+@implements IAsyncDisposable
+
+<h3>Live Location Dashboard</h3>
+
+<p>Status: <strong>@StatusMessage</strong></p>
+
+@if (Locations.Count == 0)
+{
+    <p>No locations yet. Open <a href="/track" target="_blank">/track</a> on a phone to start sharing.</p>
+}
+else
+{
+    <p>Tracking @Locations.Count user(s):</p>
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                <th>User</th>
+                <th>Latitude</th>
+                <th>Longitude</th>
+                <th>Last Update</th>
+                <th>Map</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var loc in Locations.Values.OrderBy(l => l.UserName))
+            {
+                <tr>
+                    <td><strong>@loc.UserName</strong></td>
+                    <td>@loc.Latitude.ToString("F6")</td>
+                    <td>@loc.Longitude.ToString("F6")</td>
+                    <td>@loc.LastUpdate.ToString("HH:mm:ss")</td>
+                    <td>
+                        <a href="https://www.google.com/maps?q=@loc.Latitude,@loc.Longitude"
+                           target="_blank">View on Map</a>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private HubConnection? _hubConnection;
+    private string StatusMessage = "Connecting...";
+    private Dictionary<string, LocationEntry> Locations = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _hubConnection = new HubConnectionBuilder()
+            .WithUrl(Nav.ToAbsoluteUri("/locationhub"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        // Listen for updates
+        _hubConnection.On<double, double, string>("ReceiveLocation", (lat, lng, userName) =>
+        {
+            InvokeAsync(() =>
+            {
+                Locations[userName] = new LocationEntry
+                {
+                    UserName = userName,
+                    Latitude = lat,
+                    Longitude = lng,
+                    LastUpdate = DateTime.Now
+                };
+                StateHasChanged();
+            });
+        });
+
+        try
+        {
+            await _hubConnection.StartAsync();
+            StatusMessage = "Connected. Listening for locations...";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Connection failed: {ex.Message}";
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_hubConnection is not null)
+            await _hubConnection.DisposeAsync();
+    }
+
+    public class LocationEntry
+    {
+        public string UserName { get; set; } = "";
+        public double Latitude { get; set; }
+        public double Longitude { get; set; }
+        public DateTime LastUpdate { get; set; }
+    }
+}

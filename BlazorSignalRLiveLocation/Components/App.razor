@@ -1,0 +1,62 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <link rel="stylesheet" href="@Assets["lib/bootstrap/dist/css/bootstrap.min.css"]" />
+    <link rel="stylesheet" href="@Assets["app.css"]" />
+    <link rel="stylesheet" href="@Assets["BlazorSignalRLiveLocation.styles.css"]" />
+    <ImportMap />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <HeadOutlet @rendermode="InteractiveServer" />
+</head>
+
+<body>
+    <Routes @rendermode="InteractiveServer" />
+    <script src="_framework/blazor.web.js"></script>
+    <script>
+        let watchId = null;
+        let dotNetRef = null;
+        // Called from Blazor to start watching position
+        window.startGeolocation = (dotNetHelper) => {
+            dotNetRef = dotNetHelper;
+            if (!navigator.geolocation) {
+                throw new Error("Geolocation is not supported by this browser.");
+            }
+            watchId = navigator.geolocation.watchPosition(
+                (position) => {
+                    // Send coordinates back to Blazor
+                    dotNetRef.invokeMethodAsync(
+                        'OnLocationReceived',
+                        position.coords.latitude,
+                        position.coords.longitude
+                    );
+                },
+                (error) => {
+                    console.error("Geolocation error:", error);
+                },
+                {
+                    enableHighAccuracy: true,
+                    maximumAge: 0,
+                    timeout: 10000
+                }
+            );
+            return watchId;
+        };
+        // Called from Blazor to stop watching
+        window.stopGeolocation = (id) => {
+            if (id !== -1) {
+                navigator.geolocation.clearWatch(id);
+            }
+            if (dotNetRef) {
+                dotNetRef.dispose();
+                dotNetRef = null;
+            }
+        };
+    </script>
+
+</body>
+
+</html>

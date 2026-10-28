@@ -1,0 +1,141 @@
+﻿@page "/track"
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.SignalR.Client
+@using Microsoft.JSInterop
+@inject NavigationManager Nav
+@inject IJSRuntime JSRuntime
+@implements IAsyncDisposable
+
+<h3>Share My Location</h3>
+
+<p>Status: <strong>@StatusMessage</strong></p>
+
+<p>
+    <button class="btn btn-primary" @onclick="StartSharing" disabled="@(!IsConnected || IsSharing)">
+        Start Sharing My Location
+    </button>
+    <button class="btn btn-danger" @onclick="StopSharing" disabled="@(!IsSharing)">
+        Stop Sharing
+    </button>
+</p>
+
+@if (IsSharing)
+{
+    <p style="color: green;">
+        ✅ Sharing is active. Keep this page open on your phone.
+    </p>
+}
+
+<p>
+    <a href="/dashboard" target="_blank">Open Dashboard →</a>
+</p>
+
+@code {
+    private HubConnection? _hubConnection;
+    private bool IsConnected = false;
+    private bool IsSharing = false;
+    private string StatusMessage = "Connecting...";
+    private int _watchId = -1;
+    private string _userName = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Generate a unique name for this user session
+        _userName = "Guest-" + Guid.NewGuid().ToString().Substring(0, 4);
+
+        _hubConnection = new HubConnectionBuilder()
+            .WithUrl(Nav.ToAbsoluteUri("/locationhub"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        // Handle reconnection events
+        _hubConnection.Reconnecting += _ =>
+        {
+            IsConnected = false;
+            StatusMessage = "Reconnecting...";
+            InvokeAsync(StateHasChanged);
+            return Task.CompletedTask;
+        };
+
+        _hubConnection.Reconnected += _ =>
+        {
+            IsConnected = true;
+            StatusMessage = "Reconnected.";
+            InvokeAsync(StateHasChanged);
+            return Task.CompletedTask;
+        };
+
+        _hubConnection.Closed += _ =>
+        {
+            IsConnected = false;
+            StatusMessage = "Disconnected.";
+            InvokeAsync(StateHasChanged);
+            return Task.CompletedTask;
+        };
+
+        try
+        {
+            await _hubConnection.StartAsync();
+            IsConnected = true;
+            StatusMessage = $"Connected as {_userName}. Ready to share.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Connection failed: {ex.Message}";
+        }
+    }
+
+    private async Task StartSharing()
+    {
+        if (_hubConnection is null || !IsConnected) return;
+
+        try
+        {
+            var dotNetRef = DotNetObjectReference.Create(this);
+            _watchId = await JSRuntime.InvokeAsync<int>("startGeolocation", dotNetRef);
+            IsSharing = true;
+            StatusMessage = "GPS active. Waiting for signal...";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"GPS error: {ex.Message}";
+        }
+    }
+
+    private async Task StopSharing()
+    {
+        if (_watchId != -1)
+        {
+            await JSRuntime.InvokeVoidAsync("stopGeolocation", _watchId);
+            _watchId = -1;
+        }
+        IsSharing = false;
+        StatusMessage = "Tracking stopped.";
+    }
+
+    // Called by JavaScript when GPS gives a new position
+    [JSInvokable]
+    public async Task OnLocationReceived(double lat, double lng)
+    {
+        if (_hubConnection is null || !IsSharing) return;
+
+        await _hubConnection.SendAsync("SendLocation", lat, lng, _userName);
+        StatusMessage = $"Sent location: {lat:F6}, {lng:F6} at {DateTime.Now:HH:mm:ss}";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_hubConnection is not null)
+        {
+            await _hubConnection.DisposeAsync();
+        }
+        if (_watchId != -1)
+        {
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("stopGeolocation", _watchId);
+            }
+            catch { /* page might be gone */ }
+        }
+    }
+}
